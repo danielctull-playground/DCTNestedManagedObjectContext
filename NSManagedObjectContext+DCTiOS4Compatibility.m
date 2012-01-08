@@ -9,6 +9,69 @@
 #import "NSManagedObjectContext+DCTiOS4Compatibility.h"
 #import <objc/runtime.h>
 
+@interface NSManagedObjectContext (DCTiOS4CompatibilityInternal)
+
++ (void)dctInternal_implmentOriginalSelector:(SEL)originalSelector withNewSelector:(SEL)newSelector;
+
+- (void)dctiOS4CompatibilityInternal_contextDidSaveNotification:(NSNotification *)notification;
+
+- (dispatch_queue_t)dctInternal_dispatchQueue;
+- (void)dctInternal_setDispatchQueue:(dispatch_queue_t)queue;
+
+- (void)dct_performBlock:(void (^)())block;
+- (void)dct_performBlockAndWait:(void (^)())block;
+- (NSManagedObjectContext *)dct_parentContext;
+- (void)dct_setParentContext:(NSManagedObjectContext *)parent;
+- (id)dct_initWithConcurrencyType:(NSManagedObjectContextConcurrencyType)ct;
+- (NSManagedObjectContextConcurrencyType)dct_concurrencyType;
+
+@end
+
+@interface DCTNestedContextParentChildContainer : NSObject
+@property (nonatomic, weak) NSManagedObjectContext *parentContext;
+@property (nonatomic, weak) NSManagedObjectContext *childContext;
+- (id)initWithParentContext:(NSManagedObjectContext *)parentContext childContext:(NSManagedObjectContext *)childContext;
+@end
+
+@implementation DCTNestedContextParentChildContainer
+@synthesize parentContext;
+@synthesize childContext;
+
+- (id)initWithParentContext:(NSManagedObjectContext *)parent childContext:(NSManagedObjectContext *)child {
+	if (!(self = [super init])) return nil;
+	parentContext = parent;
+	childContext = child;
+	
+	NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
+	
+	[defaultCenter addObserver:child 
+					  selector:@selector(dctiOS4CompatibilityInternal_contextDidSaveNotification:) 
+						  name:NSManagedObjectContextDidSaveNotification
+						object:parent];
+	
+	[defaultCenter addObserver:parent
+					  selector:@selector(dctiOS4CompatibilityInternal_contextDidSaveNotification:) 
+						  name:NSManagedObjectContextDidSaveNotification
+						object:child];
+	
+	return self;
+}
+
+- (void)dealloc {
+	
+	NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
+	
+	[defaultCenter removeObserver:childContext
+							 name:NSManagedObjectContextDidSaveNotification
+						   object:parentContext];
+	
+	[defaultCenter removeObserver:parentContext
+							 name:NSManagedObjectContextDidSaveNotification
+						   object:childContext];
+}
+
+@end
+
 
 @interface DCTiOS4CompatibilityInternalQueueContainer : NSObject
 @property (nonatomic, assign) dispatch_queue_t queue;
@@ -27,23 +90,7 @@
 @end
 
 
-@interface NSManagedObjectContext (DCTiOS4CompatibilityInternal)
 
-+ (void)dctInternal_implmentOriginalSelector:(SEL)originalSelector withNewSelector:(SEL)newSelector;
-
-- (void)dctiOS4CompatibilityInternal_childContextDidSaveNotification:(NSNotification *)notification;
-
-- (dispatch_queue_t)dctInternal_dispatchQueue;
-- (void)dctInternal_setDispatchQueue:(dispatch_queue_t)queue;
-
-- (void)dct_performBlock:(void (^)())block;
-- (void)dct_performBlockAndWait:(void (^)())block;
-- (NSManagedObjectContext *)dct_parentContext;
-- (void)dct_setParentContext:(NSManagedObjectContext *)parent;
-- (id)dct_initWithConcurrencyType:(NSManagedObjectContextConcurrencyType)ct;
-- (NSManagedObjectContextConcurrencyType)dct_concurrencyType;
-
-@end
 
 
 @implementation NSManagedObjectContext (DCTiOS4Compatibility)
@@ -75,17 +122,17 @@
 }
 
 - (NSManagedObjectContextConcurrencyType)dct_concurrencyType {
-	return [objc_getAssociatedObject(self, _cmd) unsignedIntValue];
+	return [objc_getAssociatedObject(self, @selector(dct_concurrencyType)) unsignedIntValue];
 }
 
 - (dispatch_queue_t)dctInternal_dispatchQueue {
-	DCTiOS4CompatibilityInternalQueueContainer *c = objc_getAssociatedObject(self, @selector(dctInternal_setDispatchQueue:));
+	DCTiOS4CompatibilityInternalQueueContainer *c = objc_getAssociatedObject(self, @selector(dctInternal_dispatchQueue));
 	return c.queue;
 }
 - (void)dctInternal_setDispatchQueue:(dispatch_queue_t)queue {
 	DCTiOS4CompatibilityInternalQueueContainer *c = [DCTiOS4CompatibilityInternalQueueContainer new];
 	c.queue = queue;
-	objc_setAssociatedObject(self, _cmd, c, OBJC_ASSOCIATION_RETAIN);
+	objc_setAssociatedObject(self, @selector(dctInternal_dispatchQueue), c, OBJC_ASSOCIATION_RETAIN);
 }
 
 - (void)dct_performBlock:(void (^)())block {
@@ -109,20 +156,16 @@
 }
 
 - (NSManagedObjectContext *)dct_parentContext {
-	return objc_getAssociatedObject(self, @selector(dct_setParentContext:));
+	DCTNestedContextParentChildContainer *container = objc_getAssociatedObject(self, @selector(dct_parentContext));
+	return container.parentContext;
 }
 
 - (void)dct_setParentContext:(NSManagedObjectContext *)parent {
 	
-	NSManagedObjectContext *currentParentContext = [self dct_parentContext];	
-	if (currentParentContext) [[NSNotificationCenter defaultCenter] removeObserver:currentParentContext name:NSManagedObjectContextDidSaveNotification object:self];
-	
-	objc_setAssociatedObject(self, _cmd, parent, OBJC_ASSOCIATION_ASSIGN);
-	
-	if (parent) {
-		[[NSNotificationCenter defaultCenter] addObserver:parent selector:@selector(dctiOS4Compatibility_childContextDidSaveNotification:) name:NSManagedObjectContextDidSaveNotification object:self];
-		self.persistentStoreCoordinator = parent.persistentStoreCoordinator;
-	}
+	DCTNestedContextParentChildContainer *container = [[DCTNestedContextParentChildContainer alloc] initWithParentContext:parent
+																											 childContext:self];
+	objc_setAssociatedObject(self, @selector(dct_parentContext), container, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+	self.persistentStoreCoordinator = parent.persistentStoreCoordinator;
 }
 
 - (id)init_dctWithConcurrencyType:(NSManagedObjectContextConcurrencyType)ct {
@@ -140,12 +183,10 @@
 	return self;	
 }
 
-
-
-
-
-- (void)dctiOS4Compatibility_childContextDidSaveNotification:(NSNotification *)notification {
-	[self mergeChangesFromContextDidSaveNotification:notification];
+- (void)dctiOS4CompatibilityInternal_contextDidSaveNotification:(NSNotification *)notification {
+	[self performBlock:^{
+		[self mergeChangesFromContextDidSaveNotification:notification];
+	}];
 }
 
 
