@@ -9,27 +9,16 @@
 #import "NSManagedObjectContext+DCTiOS4Compatibility.h"
 #import <objc/runtime.h>
 
-@interface NSManagedObjectContext (DCTiOS4CompatibilityInternal)
-
-+ (void)dctInternal_implmentOriginalSelector:(SEL)originalSelector withNewSelector:(SEL)newSelector;
-
-- (void)dctiOS4CompatibilityInternal_contextDidSaveNotification:(NSNotification *)notification;
-
-- (dispatch_queue_t)dctInternal_dispatchQueue;
-- (void)dctInternal_setDispatchQueue:(dispatch_queue_t)queue;
-
-- (void)dct_performBlock:(void (^)())block;
-- (void)dct_performBlockAndWait:(void (^)())block;
-- (NSManagedObjectContext *)dct_parentContext;
-- (void)dct_setParentContext:(NSManagedObjectContext *)parent;
-- (id)dct_initWithConcurrencyType:(NSManagedObjectContextConcurrencyType)ct;
-- (NSManagedObjectContextConcurrencyType)dct_concurrencyType;
-
+@interface NSManagedObjectContext (DCTNestedContextInternal)
++ (void)dctNestedContextInternal_implmentOriginalSelector:(SEL)originalSelector withNewSelector:(SEL)newSelector;
+- (void)dctNestedContextInternal_contextDidSaveNotification:(NSNotification *)notification;
+- (dispatch_queue_t)dctNestedContextInternal_dispatchQueue;
+- (void)dctNestedContextInternal_setDispatchQueue:(dispatch_queue_t)queue;
 @end
 
 @interface DCTNestedContextParentChildContainer : NSObject
-@property (nonatomic, weak) NSManagedObjectContext *parentContext;
-@property (nonatomic, weak) NSManagedObjectContext *childContext;
+@property (nonatomic, assign) NSManagedObjectContext *parentContext;
+@property (nonatomic, assign) NSManagedObjectContext *childContext;
 - (id)initWithParentContext:(NSManagedObjectContext *)parentContext childContext:(NSManagedObjectContext *)childContext;
 @end
 
@@ -45,12 +34,12 @@
 	NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
 	
 	[defaultCenter addObserver:child 
-					  selector:@selector(dctiOS4CompatibilityInternal_contextDidSaveNotification:) 
+					  selector:@selector(dctNestedContextInternal_contextDidSaveNotification:) 
 						  name:NSManagedObjectContextDidSaveNotification
 						object:parent];
 	
 	[defaultCenter addObserver:parent
-					  selector:@selector(dctiOS4CompatibilityInternal_contextDidSaveNotification:) 
+					  selector:@selector(dctNestedContextInternal_contextDidSaveNotification:) 
 						  name:NSManagedObjectContextDidSaveNotification
 						object:child];
 	
@@ -58,7 +47,6 @@
 }
 
 - (void)dealloc {
-	
 	NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
 	
 	[defaultCenter removeObserver:childContext
@@ -68,6 +56,8 @@
 	[defaultCenter removeObserver:parentContext
 							 name:NSManagedObjectContextDidSaveNotification
 						   object:childContext];
+	parentContext = nil;
+	childContext = nil;
 }
 
 @end
@@ -93,9 +83,9 @@
 
 
 
-@implementation NSManagedObjectContext (DCTiOS4Compatibility)
+@implementation NSManagedObjectContext (DCTNestedContextInternal)
 
-+ (void)dctInternal_implmentOriginalSelector:(SEL)originalSelector withNewSelector:(SEL)newSelector {
++ (void)dctNestedContextInternal_implmentOriginalSelector:(SEL)originalSelector withNewSelector:(SEL)newSelector {
 	
 	if (![self instancesRespondToSelector:originalSelector]) {
 		Method newMethod = class_getInstanceMethod(self, newSelector);
@@ -103,15 +93,35 @@
 	}	
 }
 
+- (void)dctNestedContextInternal_contextDidSaveNotification:(NSNotification *)notification {
+	[self performBlock:^{
+		[self mergeChangesFromContextDidSaveNotification:notification];
+	}];
+}
+
+- (dispatch_queue_t)dctNestedContextInternal_dispatchQueue {
+	DCTiOS4CompatibilityInternalQueueContainer *c = objc_getAssociatedObject(self, @selector(dctInternal_dispatchQueue));
+	return c.queue;
+}
+- (void)dctNestedContextInternal_setDispatchQueue:(dispatch_queue_t)queue {
+	DCTiOS4CompatibilityInternalQueueContainer *c = [DCTiOS4CompatibilityInternalQueueContainer new];
+	c.queue = queue;
+	objc_setAssociatedObject(self, @selector(dctInternal_dispatchQueue), c, OBJC_ASSOCIATION_RETAIN);
+}
+
+@end 
+
+@implementation NSManagedObjectContext (DCTNestedContext)
+
 + (void)load {
-	[self dctInternal_implmentOriginalSelector:@selector(parentContext) withNewSelector:@selector(dct_parentContext)];
-	[self dctInternal_implmentOriginalSelector:@selector(setParentContext:) withNewSelector:@selector(dct_setParentContext:)];
-	[self dctInternal_implmentOriginalSelector:@selector(performBlockAndWait:) withNewSelector:@selector(dct_performBlockAndWait:)];
-	[self dctInternal_implmentOriginalSelector:@selector(performBlock:) withNewSelector:@selector(dct_performBlock:)];
-	[self dctInternal_implmentOriginalSelector:@selector(initWithConcurrencyType:) withNewSelector:@selector(dct_initWithConcurrencyType:)];
-	[self dctInternal_implmentOriginalSelector:@selector(concurrencyType) withNewSelector:@selector(dct_concurrencyType)];
+	[self dctNestedContextInternal_implmentOriginalSelector:@selector(parentContext) withNewSelector:@selector(dct_parentContext)];
+	[self dctNestedContextInternal_implmentOriginalSelector:@selector(setParentContext:) withNewSelector:@selector(dct_setParentContext:)];
+	[self dctNestedContextInternal_implmentOriginalSelector:@selector(performBlockAndWait:) withNewSelector:@selector(dct_performBlockAndWait:)];
+	[self dctNestedContextInternal_implmentOriginalSelector:@selector(performBlock:) withNewSelector:@selector(dct_performBlock:)];
+	[self dctNestedContextInternal_implmentOriginalSelector:@selector(initWithConcurrencyType:) withNewSelector:@selector(dct_initWithConcurrencyType:)];
+	[self dctNestedContextInternal_implmentOriginalSelector:@selector(concurrencyType) withNewSelector:@selector(dct_concurrencyType)];
 	
-	if (![self instancesRespondToSelector:@selector(parentContext)]) {
+	if (![self instancesRespondToSelector:@selector(concurrencyType)]) {
 		enum {
 			NSConfinementConcurrencyType        = 0x00,
 			NSPrivateQueueConcurrencyType       = 0x01,
@@ -125,16 +135,6 @@
 	return [objc_getAssociatedObject(self, @selector(dct_concurrencyType)) unsignedIntValue];
 }
 
-- (dispatch_queue_t)dctInternal_dispatchQueue {
-	DCTiOS4CompatibilityInternalQueueContainer *c = objc_getAssociatedObject(self, @selector(dctInternal_dispatchQueue));
-	return c.queue;
-}
-- (void)dctInternal_setDispatchQueue:(dispatch_queue_t)queue {
-	DCTiOS4CompatibilityInternalQueueContainer *c = [DCTiOS4CompatibilityInternalQueueContainer new];
-	c.queue = queue;
-	objc_setAssociatedObject(self, @selector(dctInternal_dispatchQueue), c, OBJC_ASSOCIATION_RETAIN);
-}
-
 - (void)dct_performBlock:(void (^)())block {
 	
 	if ([self dct_concurrencyType] == NSConfinementConcurrencyType) {
@@ -142,7 +142,7 @@
 		return;
 	}
 	
-	dispatch_async([self dctInternal_dispatchQueue], block);
+	dispatch_async([self dctNestedContextInternal_dispatchQueue], block);
 }
 
 - (void)dct_performBlockAndWait:(void (^)())block {
@@ -152,7 +152,7 @@
 		return;
 	}
 	
-	dispatch_sync([self dctInternal_dispatchQueue], block);
+	dispatch_sync([self dctNestedContextInternal_dispatchQueue], block);
 }
 
 - (NSManagedObjectContext *)dct_parentContext {
@@ -175,18 +175,12 @@
 	objc_setAssociatedObject(self, @selector(dct_concurrencyType), [NSNumber numberWithUnsignedInt:ct], OBJC_ASSOCIATION_RETAIN);
 	
 	if (ct == NSPrivateQueueConcurrencyType) {
-		[self dctInternal_setDispatchQueue:dispatch_queue_create("uk.co.danieltull.DCTNSManagedObjectContextiOS4Compatibility", DISPATCH_QUEUE_CONCURRENT)];
+		[self dctNestedContextInternal_setDispatchQueue:dispatch_queue_create("uk.co.danieltull.DCTNSManagedObjectContextiOS4Compatibility", DISPATCH_QUEUE_CONCURRENT)];
 	} else if (ct == NSMainQueueConcurrencyType) {
-		[self dctInternal_setDispatchQueue:dispatch_get_main_queue()];
+		[self dctNestedContextInternal_setDispatchQueue:dispatch_get_main_queue()];
 	}
 	
 	return self;	
-}
-
-- (void)dctiOS4CompatibilityInternal_contextDidSaveNotification:(NSNotification *)notification {
-	[self performBlock:^{
-		[self mergeChangesFromContextDidSaveNotification:notification];
-	}];
 }
 
 

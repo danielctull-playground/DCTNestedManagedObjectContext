@@ -8,7 +8,15 @@
 
 #import <CoreData/CoreData.h>
 
-@interface NSManagedObjectContext (DCTiOS4Compatibility)
+@interface NSManagedObjectContext (DCTNestedContext)
+
+
+- (void)dct_performBlock:(void (^)())block;
+- (void)dct_performBlockAndWait:(void (^)())block;
+- (NSManagedObjectContext *)dct_parentContext;
+- (void)dct_setParentContext:(NSManagedObjectContext *)parent;
+- (id)init_dctWithConcurrencyType:(NSManagedObjectContextConcurrencyType)ct;
+- (NSManagedObjectContextConcurrencyType)dct_concurrencyType;
 
 /* Adds the following methods to iOS 4 NSManagedObjectContext
 - (void)performBlock:(void (^)())block;
